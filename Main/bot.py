@@ -6,8 +6,6 @@ import threading
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
-from flask import Flask
-from imdb import IMDb
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -25,8 +23,8 @@ bot = Client(
 mongo_client = pymongo.MongoClient(MONGO_URI)
 db = mongo_client["AutoFilterBot"]
 
-# Dictionary to store rename requests
-rename_requests = {}
+# Dictionary to store user actions
+user_requests = {}
 
 # Command: /start
 @bot.on_message(filters.command("start") & filters.private)
@@ -36,104 +34,127 @@ async def start(client, message: Message):
         [InlineKeyboardButton('🔍 Help', url=f"https://t.me/{client.me.username}?start=help")],
     ]
     await message.reply_text(
-        "👋 Hello! I am an Auto-Filter Bot.\n\n"
-        "I can help you find movies and rename files. Use /help to see my commands.",
+        "👋 Hello! I am an Auto-Filter & File Rename Bot.\n\n"
+        "I can rename files, change thumbnails, and modify captions.\n\n"
+        "Send me any file to begin!",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
 
-# Detect forwarded movies and show rename options
+# Detect forwarded files (Documents, Videos, or Audios)
 @bot.on_message(filters.document | filters.video | filters.audio)
-async def detect_movie_forward(client, message):
-    file_id = None
-    file_name = None
+async def detect_file(client, message):
+    file_id = message.document.file_id if message.document else (
+        message.video.file_id if message.video else message.audio.file_id
+    )
+    file_name = message.document.file_name if message.document else (
+        "Video.mp4" if message.video else "Audio.mp3"
+    )
+    caption = message.caption or "No Caption"
 
-    if message.document:
-        file_id = message.document.file_id
-        file_name = message.document.file_name
-    elif message.video:
-        file_id = message.video.file_id
-        file_name = "Video.mp4"
-    elif message.audio:
-        file_id = message.audio.file_id
-        file_name = "Audio.mp3"
-
-    if not file_id:
-        return await message.reply("⚠️ Could not detect a valid file.")
-
-    rename_requests[message.chat.id] = {
+    user_requests[message.chat.id] = {
         "file_id": file_id,
-        "caption": message.caption or "No Caption",
-        "file_name": file_name
+        "file_name": file_name,
+        "caption": caption,
+        "thumbnail": None
     }
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Rename File", callback_data="rename_file")],
         [InlineKeyboardButton("🖼 Change Thumbnail", callback_data="change_thumb")],
-        [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")]
+        [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")],
+        [InlineKeyboardButton("✅ Done", callback_data="done")]
     ])
 
     await message.reply_text(
-        f"**Movie Detected:** `{file_name}`\n\nChoose an option below:",
+        f"📂 **File Detected:** `{file_name}`\n\nChoose an option below:",
         reply_markup=buttons
     )
 
-# Handle rename, caption edit, and thumbnail update
+# Handle Callback Buttons
 @bot.on_callback_query()
 async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
 
-    if chat_id not in rename_requests:
+    if chat_id not in user_requests:
         return await callback_query.answer("⚠️ No file found!", show_alert=True)
 
     if callback_query.data == "rename_file":
-        await callback_query.message.reply_text("📌 Send the new filename (including extension, e.g., `new_movie.mp4`)")
-        rename_requests[chat_id]["action"] = "rename"
+        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
+        user_requests[chat_id]["action"] = "rename"
 
     elif callback_query.data == "change_thumb":
         await callback_query.message.reply_text("📌 Send a new thumbnail image.")
-        rename_requests[chat_id]["action"] = "thumbnail"
+        user_requests[chat_id]["action"] = "thumbnail"
 
     elif callback_query.data == "edit_caption":
         await callback_query.message.reply_text("📌 Send the new caption.")
-        rename_requests[chat_id]["action"] = "caption"
+        user_requests[chat_id]["action"] = "caption"
+
+    elif callback_query.data == "done":
+        await process_final_file(client, chat_id, callback_query.message)
 
     await callback_query.answer()
 
-# Handle text input for renaming or caption changing
-@bot.on_message(filters.text & filters.private)
-async def handle_text_input(client, message):
+# Handle Text & Photo Inputs
+@bot.on_message(filters.text | filters.photo)
+async def handle_user_input(client, message: Message):
     chat_id = message.chat.id
 
-    if chat_id not in rename_requests or "action" not in rename_requests[chat_id]:
+    if chat_id not in user_requests or "action" not in user_requests[chat_id]:
         return
 
-    action = rename_requests[chat_id]["action"]
-    data = rename_requests[chat_id]
+    action = user_requests[chat_id]["action"]
 
     if action == "rename":
         new_filename = message.text
-        await message.reply_document(document=data["file_id"], file_name=new_filename, caption=data["caption"])
-        await message.reply_text(f"✅ File renamed to `{new_filename}`.")
+        user_requests[chat_id]["file_name"] = new_filename
+        await message.reply_text(f"✅ File renamed to `{new_filename}`.\n\nNow click **Done**.")
 
     elif action == "caption":
         new_caption = message.text
-        await message.reply_document(document=data["file_id"], caption=new_caption)
-        await message.reply_text("✅ Caption updated successfully.")
+        user_requests[chat_id]["caption"] = new_caption
+        await message.reply_text("✅ Caption updated successfully.\n\nNow click **Done**.")
 
-    rename_requests.pop(chat_id, None)
+    elif action == "thumbnail" and message.photo:
+        photo_file = await client.download_media(message.photo.file_id)
+        user_requests[chat_id]["thumbnail"] = photo_file
+        await message.reply_text("✅ Thumbnail updated successfully.\n\nNow click **Done**.")
 
-# Web server for Koyeb (Prevents Bot from Sleeping)
-app = Flask(__name__)
+    user_requests[chat_id]["action"] = None  # Reset action
 
-@app.route('/')
-def home():
-    return "Bot is running!"
+# Process and Send Final File
+async def process_final_file(client, chat_id, message):
+    if chat_id not in user_requests:
+        return await message.reply_text("⚠️ No file found!")
 
-def run():
-    app.run(host="0.0.0.0", port=8080)
+    data = user_requests[chat_id]
 
-threading.Thread(target=run).start()
+    # Download the original file
+    temp_file = await client.download_media(data["file_id"])
+    new_filename = data["file_name"]
+    new_caption = data["caption"]
+    thumbnail_path = data["thumbnail"]
+
+    # Rename the file
+    new_file_path = f"./downloads/{new_filename}"
+    os.rename(temp_file, new_file_path)
+
+    # Send the modified file
+    await message.reply_document(
+        document=new_file_path,
+        caption=new_caption,
+        thumb=thumbnail_path if thumbnail_path else None
+    )
+
+    await message.reply_text("✅ File processed successfully!")
+
+    # Clean up
+    os.remove(new_file_path)
+    if thumbnail_path:
+        os.remove(thumbnail_path)
+
+    user_requests.pop(chat_id, None)
 
 # Run the bot
 bot.run()
-        
+
