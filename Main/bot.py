@@ -148,6 +148,39 @@ def run():
 # Start the web server in a separate thread
 threading.Thread(target=run).start()
 
+#image rename code
+from pyrogram import Client, filters
+from pyrogram.types import InputMediaDocument, InputMediaPhoto
+
+@app.on_message(filters.command("edit"))
+async def edit_media(client, message):
+    if not message.reply_to_message:
+        return await message.reply("Reply to a media message to edit its caption or image!")
+
+    args = message.text.split(maxsplit=2)
+    if len(args) < 3:
+        return await message.reply("Usage: /edit <new_caption> <image_url (optional)>")
+
+    new_caption = args[1]
+    new_image = args[2] if len(args) > 2 else None
+
+    if message.reply_to_message.document:
+        media = InputMediaDocument(
+            media=message.reply_to_message.document.file_id,
+            caption=new_caption
+        )
+    elif message.reply_to_message.photo:
+        media = InputMediaPhoto(
+            media=new_image if new_image else message.reply_to_message.photo.file_id,
+            caption=new_caption
+        )
+    else:
+        return await message.reply("Unsupported media type!")
+
+    await message.reply_to_message.edit_media(media)
+    await message.reply("Media updated successfully!")
+    
+
 
 # Run the bot
 bot.run()
