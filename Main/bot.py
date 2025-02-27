@@ -149,54 +149,77 @@ def run():
 threading.Thread(target=run).start()
 
 #image rename code
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
-# Store temp data for renaming
+# Dictionary to store rename requests
 rename_requests = {}
 
 @app.on_message(filters.document | filters.video | filters.audio)
 async def detect_movie_forward(client, message):
-    file_id = message.document.file_id if message.document else message.video.file_id if message.video else message.audio.file_id
-    filename = message.document.file_name if message.document else "Unknown_File"
+    file_id = None
+    file_name = None
 
-    # Store file details temporarily
+    # Detect file type
+    if message.document:
+        file_id = message.document.file_id
+        file_name = message.document.file_name
+    elif message.video:
+        file_id = message.video.file_id
+        file_name = "Video.mp4"
+    elif message.audio:
+        file_id = message.audio.file_id
+        file_name = "Audio.mp3"
+
+    if not file_id:
+        return await message.reply("⚠️ Could not detect a valid file.")
+
+    # Store file details
     rename_requests[message.chat.id] = {
         "file_id": file_id,
         "caption": message.caption or "No Caption",
-        "file_name": filename
+        "file_name": file_name
     }
 
+    # Inline buttons
     buttons = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📝 Rename File", callback_data="rename_file"),
-         InlineKeyboardButton("🖼 Change Thumbnail", callback_data="change_thumb")],
+        [InlineKeyboardButton("📝 Rename File", callback_data="rename_file")],
+        [InlineKeyboardButton("🖼 Change Thumbnail", callback_data="change_thumb")],
         [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")]
     ])
 
-    await message.reply(f"Movie detected: **{filename}**\nChoose an option:", reply_markup=buttons)
+    await message.reply_text(
+        f"**Movie Detected:** `{file_name}`\n\nChoose an option below:",
+        reply_markup=buttons
+    )
 
 @app.on_callback_query()
-async def handle_callbacks(client, callback_query):
+async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
+
     if chat_id not in rename_requests:
-        return await callback_query.answer("No file detected!", show_alert=True)
+        return await callback_query.answer("⚠️ No file found!", show_alert=True)
 
     data = rename_requests[chat_id]
 
     if callback_query.data == "rename_file":
-        await callback_query.message.reply("Send the new filename (including extension, e.g., `new_movie.mp4`)")
+        await callback_query.message.reply_text("📌 Send the new filename (including extension, e.g., `new_movie.mp4`)")
         rename_requests[chat_id]["action"] = "rename"
 
     elif callback_query.data == "change_thumb":
-        await callback_query.message.reply("Send a new thumbnail image.")
+        await callback_query.message.reply_text("📌 Send a new thumbnail image.")
         rename_requests[chat_id]["action"] = "thumbnail"
 
     elif callback_query.data == "edit_caption":
-        await callback_query.message.reply("Send the new caption.")
+        await callback_query.message.reply_text("📌 Send the new caption.")
         rename_requests[chat_id]["action"] = "caption"
 
+    await callback_query.answer()
+
 @app.on_message(filters.text)
-async def handle_text_rename(client, message):
+async def handle_text_input(client, message):
     chat_id = message.chat.id
+
     if chat_id not in rename_requests or "action" not in rename_requests[chat_id]:
         return
 
@@ -205,15 +228,13 @@ async def handle_text_rename(client, message):
 
     if action == "rename":
         new_filename = message.text
-        media = InputMediaDocument(media=data["file_id"], caption=data["caption"])
         await message.reply_document(document=data["file_id"], file_name=new_filename, caption=data["caption"])
-        await message.reply(f"✅ File renamed to: `{new_filename}`")
-    
+        await message.reply_text(f"✅ File renamed to `{new_filename}`.")
+
     elif action == "caption":
         new_caption = message.text
-        media = InputMediaDocument(media=data["file_id"], caption=new_caption)
         await message.reply_document(document=data["file_id"], caption=new_caption)
-        await message.reply("✅ Caption updated!")
+        await message.reply_text("✅ Caption updated successfully.")
 
     rename_requests.pop(chat_id, None)
 
