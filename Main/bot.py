@@ -2,9 +2,11 @@ import os
 import logging
 import asyncio
 import pymongo
+import threading
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
+from flask import Flask
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -132,6 +134,20 @@ async def users_list(client, message):
         text = "🚫 No users found!"
     
     await message.reply_text(text)
+
+#new add server
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run():
+    app.run(host="0.0.0.0", port=8080)
+
+# Start the web server in a separate thread
+threading.Thread(target=run).start()
+
 
 # Run the bot
 bot.run()
