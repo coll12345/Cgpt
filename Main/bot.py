@@ -4,11 +4,11 @@ import asyncio
 import pymongo
 import threading
 from pyrogram import Client, filters, enums
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
 from flask import Flask
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import Message
+
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -28,7 +28,7 @@ db = mongo_client["AutoFilterBot"]
 
 # Command: /start
 @bot.on_message(filters.command("start") & filters.private)
-async def start(client, message):
+async def start(client, message: Message):
     buttons = [
         [InlineKeyboardButton('🎬 Movie Channel', url='https://t.me/real_MoviesAdda3')],
         [InlineKeyboardButton('🔍 Help', url=f"https://t.me/{client.me.username}?start=help")],
@@ -38,7 +38,6 @@ async def start(client, message):
         "I can help you find movies and rename files. Use /help to see my commands.",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
-
 # Command: /filter (Add Manual Filter)
 @bot.on_message(filters.command("filter") & filters.group)
 async def add_filter(client, message):
