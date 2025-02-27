@@ -7,6 +7,8 @@ from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
 from flask import Flask
+from pyrogram import Client, filters
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
@@ -149,8 +151,7 @@ def run():
 threading.Thread(target=run).start()
 
 #image rename code
-from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+
 
 # Dictionary to store rename requests
 rename_requests = {}
