@@ -3,6 +3,9 @@ import logging
 import asyncio
 import pymongo
 import threading
+from flask import Flask
+import threading
+import logging
 from pyrogram import Client, filters, enums
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
@@ -22,6 +25,22 @@ bot = Client(
 # Connect to MongoDB
 mongo_client = pymongo.MongoClient(MONGO_URI)
 db = mongo_client["AutoFilterBot"]
+
+
+#server
+# Dummy web server to pass health checks
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_server():
+    app.run(host="0.0.0.0", port=8080)
+
+# Start the web server in a separate thread
+threading.Thread(target=run_server, daemon=True).start()
+
 
 # Dictionary to store user actions
 user_requests = {}
