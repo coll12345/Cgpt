@@ -1,4 +1,3 @@
-import os
 import logging
 import asyncio
 import pymongo
@@ -24,11 +23,7 @@ bot = Client(
 mongo_client = pymongo.MongoClient(MONGO_URI)
 db = mongo_client["AutoFilterBot"]
 
-# Ensure a download directory exists
-DOWNLOAD_DIR = "./downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-# Dictionary to store user modifications
+# Store user modifications
 user_requests = {}
 
 # Detect forwarded files
@@ -40,10 +35,12 @@ async def detect_file(client, message):
     file_name = message.document.file_name if message.document else (
         "Video.mp4" if message.video else "Audio.mp3"
     )
-    
+    caption = message.caption or "No Caption"
+
     user_requests[message.chat.id] = {
         "file_id": file_id,
-        "file_name": file_name
+        "file_name": file_name,
+        "caption": caption
     }
 
     buttons = InlineKeyboardMarkup([
@@ -56,7 +53,7 @@ async def detect_file(client, message):
         reply_markup=buttons
     )
 
-# Handle Callback Queries
+# Handle Callbacks
 @bot.on_callback_query()
 async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
@@ -69,13 +66,12 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
 
     if action == "rename_file":
         await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
-
     elif action == "done":
-        asyncio.create_task(send_renamed_file(client, chat_id, callback_query.message))  # Run in background for speed
+        await process_final_file(client, chat_id, callback_query.message)
 
     await callback_query.answer()
 
-# Handle User Inputs (Text)
+# Handle Text Input for Filename
 @bot.on_message(filters.text)
 async def handle_text_input(client, message: Message):
     chat_id = message.chat.id
@@ -86,40 +82,28 @@ async def handle_text_input(client, message: Message):
     action = user_requests[chat_id]["action"]
 
     if action == "rename_file":
-        new_filename = message.text.strip()
-        if not new_filename or "." not in new_filename:
-            return await message.reply_text("⚠️ Invalid filename! Please include an extension (e.g., `movie.mp4`).")
-
+        new_filename = message.text
         user_requests[chat_id]["file_name"] = new_filename
         await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
 
     user_requests[chat_id]["action"] = None  # Reset action
 
-# Send Renamed File (Fastest Possible Method)
-async def send_renamed_file(client, chat_id, message):
+# Process and Send Renamed File FAST
+async def process_final_file(client, chat_id, message):
     if chat_id not in user_requests:
         return await message.reply_text("⚠️ No file found!")
 
     data = user_requests[chat_id]
-
-    # Download the file (fastest method)
-    temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/temp")
-
-    # Get new filename and rename it
-    new_file_path = f"{DOWNLOAD_DIR}/{data['file_name']}"
-    os.rename(temp_file_path, new_file_path)
-
-    # Send the renamed file instantly
-    await client.send_document(
-        chat_id=chat_id,
-        document=new_file_path,
-        file_name=data["file_name"]
+    
+    # Copy the file instantly with a new name
+    await client.copy_message(
+        chat_id,
+        from_chat_id=chat_id,
+        message_id=message.message_id,
+        caption=f"📂 **Renamed File:** `{data['file_name']}`"
     )
 
-    await message.reply_text("✅ File renamed and sent successfully!")
-
-    # Delete file after sending
-    os.remove(new_file_path)
+    await message.reply_text("✅ File renamed instantly!")
 
     user_requests.pop(chat_id, None)
 
@@ -133,8 +117,9 @@ def home():
 def run():
     app.run(host="0.0.0.0", port=8080)
 
-# Start the web server in a separate thread
+# Start web server in a separate thread
 threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
+    
