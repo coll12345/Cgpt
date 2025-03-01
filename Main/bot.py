@@ -3,7 +3,7 @@ import logging
 import asyncio
 import pymongo
 import threading
-from pyrogram import Client, filters, enums
+from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
 from flask import Flask
@@ -24,12 +24,16 @@ bot = Client(
 mongo_client = pymongo.MongoClient(MONGO_URI)
 db = mongo_client["AutoFilterBot"]
 
-# Dictionary to store rename requests
-rename_requests = {}
+# Ensure a download directory exists
+DOWNLOAD_DIR = "./downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Detect forwarded files (Documents, Videos, or Audios)
+# Dictionary to store user modifications
+user_requests = {}
+
+# Detect forwarded files
 @bot.on_message(filters.document | filters.video | filters.audio)
-async def detect_movie_forward(client, message):
+async def detect_file(client, message):
     file_id = message.document.file_id if message.document else (
         message.video.file_id if message.video else message.audio.file_id
     )
@@ -38,7 +42,7 @@ async def detect_movie_forward(client, message):
     )
     caption = message.caption or "No Caption"
 
-    rename_requests[message.chat.id] = {
+    user_requests[message.chat.id] = {
         "file_id": file_id,
         "file_name": file_name,
         "caption": caption,
@@ -62,22 +66,22 @@ async def detect_movie_forward(client, message):
 async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
 
-    if chat_id not in rename_requests:
+    if chat_id not in user_requests:
         return await callback_query.answer("⚠️ No file found!", show_alert=True)
 
-    if callback_query.data == "rename_file":
-        await callback_query.message.reply_text("📌 Send the new filename (including extension, e.g., `new_movie.mp4`).")
-        rename_requests[chat_id]["action"] = "rename"
+    action = callback_query.data
+    user_requests[chat_id]["action"] = action
 
-    elif callback_query.data == "change_thumb":
+    if action == "rename_file":
+        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
+
+    elif action == "change_thumb":
         await callback_query.message.reply_text("📌 Send a new thumbnail image.")
-        rename_requests[chat_id]["action"] = "thumbnail"
 
-    elif callback_query.data == "edit_caption":
+    elif action == "edit_caption":
         await callback_query.message.reply_text("📌 Send the new caption.")
-        rename_requests[chat_id]["action"] = "caption"
 
-    elif callback_query.data == "done":
+    elif action == "done":
         await process_final_file(client, chat_id, callback_query.message)
 
     await callback_query.answer()
@@ -87,47 +91,49 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
 async def handle_text_input(client, message: Message):
     chat_id = message.chat.id
 
-    if chat_id not in rename_requests or "action" not in rename_requests[chat_id]:
+    if chat_id not in user_requests or "action" not in user_requests[chat_id]:
         return
 
-    action = rename_requests[chat_id]["action"]
+    action = user_requests[chat_id]["action"]
 
-    if action == "rename":
+    if action == "rename_file":
         new_filename = message.text
-        rename_requests[chat_id]["file_name"] = new_filename
-        await message.reply_text(f"✅ File renamed to `{new_filename}`.\n\nNow click **Done**.")
+        user_requests[chat_id]["file_name"] = new_filename
+        await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
 
-    elif action == "caption":
+    elif action == "edit_caption":
         new_caption = message.text
-        rename_requests[chat_id]["caption"] = new_caption
-        await message.reply_text("✅ Caption updated successfully.\n\nNow click **Done**.")
+        user_requests[chat_id]["caption"] = new_caption
+        await message.reply_text("✅ Caption updated.\n\nClick **Done** when ready.")
 
-    elif action == "thumbnail" and message.photo:
-        photo_file = await client.download_media(message.photo.file_id)
-        rename_requests[chat_id]["thumbnail"] = photo_file
-        await message.reply_text("✅ Thumbnail updated successfully.\n\nNow click **Done**.")
+    elif action == "change_thumb" and message.photo:
+        photo_path = await client.download_media(message.photo.file_id, file_name=f"{chat_id}_thumb.jpg")
+        user_requests[chat_id]["thumbnail"] = photo_path
+        await message.reply_text("✅ Thumbnail updated.\n\nClick **Done** when ready.")
 
-    rename_requests[chat_id]["action"] = None  # Reset action
+    user_requests[chat_id]["action"] = None  # Reset action
 
 # Process and Send Final File
 async def process_final_file(client, chat_id, message):
-    if chat_id not in rename_requests:
+    if chat_id not in user_requests:
         return await message.reply_text("⚠️ No file found!")
 
-    data = rename_requests[chat_id]
+    data = user_requests[chat_id]
 
     # Download the original file
-    temp_file = await client.download_media(data["file_id"])
+    temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
     new_filename = data["file_name"]
     new_caption = data["caption"]
     thumbnail_path = data["thumbnail"]
 
-    # Rename the file
-    new_file_path = f"./downloads/{new_filename}"
-    os.rename(temp_file, new_file_path)
+    # Ensure a valid new file path
+    new_file_path = f"{DOWNLOAD_DIR}/{new_filename}"
+    if temp_file_path != new_file_path:
+        os.rename(temp_file_path, new_file_path)
 
     # Send the modified file
-    await message.reply_document(
+    await client.send_document(
+        chat_id=chat_id,
         document=new_file_path,
         caption=new_caption,
         thumb=thumbnail_path if thumbnail_path else None
@@ -140,7 +146,7 @@ async def process_final_file(client, chat_id, message):
     if thumbnail_path:
         os.remove(thumbnail_path)
 
-    rename_requests.pop(chat_id, None)
+    user_requests.pop(chat_id, None)
 
 # Flask Web Server
 app = Flask(__name__)
@@ -157,4 +163,3 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
-    
