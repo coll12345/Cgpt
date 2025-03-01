@@ -10,7 +10,7 @@ from flask import Flask
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 # Initialize bot client
 bot = Client(
@@ -57,7 +57,7 @@ async def detect_file(client, message):
     ])
 
     await message.reply_text(
-        f"📂 File Detected: {file_name}\n\nChoose an option below:",
+        f"📂 **File Detected:** `{file_name}`\n\nChoose an option below:",
         reply_markup=buttons
     )
 
@@ -73,7 +73,7 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
     user_requests[chat_id]["action"] = action
 
     if action == "rename_file":
-        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., new_movie.mp4).")
+        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
 
     elif action == "change_thumb":
         await callback_query.message.reply_text("📌 Send a new thumbnail image.")
@@ -99,17 +99,17 @@ async def handle_text_input(client, message: Message):
     if action == "rename_file":
         new_filename = message.text
         user_requests[chat_id]["file_name"] = new_filename
-        await message.reply_text(f"✅ File will be renamed to {new_filename}.\n\nClick Done when ready.")
+        await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
 
     elif action == "edit_caption":
         new_caption = message.text
         user_requests[chat_id]["caption"] = new_caption
-        await message.reply_text("✅ Caption updated.\n\nClick Done when ready.")
+        await message.reply_text("✅ Caption updated.\n\nClick **Done** when ready.")
 
     elif action == "change_thumb" and message.photo:
         photo_path = await client.download_media(message.photo.file_id, file_name=f"{chat_id}_thumb.jpg")
         user_requests[chat_id]["thumbnail"] = photo_path
-        await message.reply_text("✅ Thumbnail updated.\n\nClick Done when ready.")
+        await message.reply_text("✅ Thumbnail updated.\n\nClick **Done** when ready.")
 
     user_requests[chat_id]["action"] = None  # Reset action
 
@@ -117,8 +117,10 @@ async def handle_text_input(client, message: Message):
 async def process_final_file(client, chat_id, message):
     if chat_id not in user_requests:
         return await message.reply_text("⚠️ No file found!")
-data = user_requests[chat_id]
-# Download the original file
+
+    data = user_requests[chat_id]
+
+    # Download the original file
     temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
     new_filename = data["file_name"]
     new_caption = data["caption"]
@@ -147,7 +149,7 @@ data = user_requests[chat_id]
     user_requests.pop(chat_id, None)
 
 # Flask Web Server
-app = Flask(name)
+app = Flask(__name__)
 
 @app.route('/')
 def home():
@@ -161,3 +163,4 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
+    
