@@ -10,7 +10,7 @@ from flask import Flask
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(__name__)
 
 # Initialize bot client
 bot = Client(
@@ -51,8 +51,6 @@ async def detect_file(client, message):
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Rename File", callback_data="rename_file")],
-        [InlineKeyboardButton("🖼 Change Thumbnail", callback_data="change_thumb")],
-        [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")],
         [InlineKeyboardButton("✅ Done", callback_data="done")]
     ])
 
@@ -75,19 +73,13 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
     if action == "rename_file":
         await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., new_movie.mp4).")
 
-    elif action == "change_thumb":
-        await callback_query.message.reply_text("📌 Send a new thumbnail image.")
-
-    elif action == "edit_caption":
-        await callback_query.message.reply_text("📌 Send the new caption.")
-
     elif action == "done":
         await process_final_file(client, chat_id, callback_query.message)
 
     await callback_query.answer()
 
-# Handle User Inputs (Text & Photo)
-@bot.on_message(filters.text | filters.photo)
+# Handle User Inputs (Text)
+@bot.on_message(filters.text)
 async def handle_text_input(client, message: Message):
     chat_id = message.chat.id
 
@@ -97,19 +89,12 @@ async def handle_text_input(client, message: Message):
     action = user_requests[chat_id]["action"]
 
     if action == "rename_file":
-        new_filename = message.text
+        new_filename = message.text.strip()
+        if not new_filename or "." not in new_filename:
+            return await message.reply_text("⚠️ Invalid filename! Please include an extension (e.g., `movie.mp4`).")
+
         user_requests[chat_id]["file_name"] = new_filename
         await message.reply_text(f"✅ File will be renamed to {new_filename}.\n\nClick Done when ready.")
-
-    elif action == "edit_caption":
-        new_caption = message.text
-        user_requests[chat_id]["caption"] = new_caption
-        await message.reply_text("✅ Caption updated.\n\nClick Done when ready.")
-
-    elif action == "change_thumb" and message.photo:
-        photo_path = await client.download_media(message.photo.file_id, file_name=f"{chat_id}_thumb.jpg")
-        user_requests[chat_id]["thumbnail"] = photo_path
-        await message.reply_text("✅ Thumbnail updated.\n\nClick Done when ready.")
 
     user_requests[chat_id]["action"] = None  # Reset action
 
@@ -117,38 +102,30 @@ async def handle_text_input(client, message: Message):
 async def process_final_file(client, chat_id, message):
     if chat_id not in user_requests:
         return await message.reply_text("⚠️ No file found!")
-data = user_requests[chat_id]
 
-    # Download the original file
+    data = user_requests[chat_id]
     temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
     new_filename = data["file_name"]
     new_caption = data["caption"]
-    thumbnail_path = data["thumbnail"]
 
-    # Ensure a valid new file path
     new_file_path = f"{DOWNLOAD_DIR}/{new_filename}"
     if temp_file_path != new_file_path:
         os.rename(temp_file_path, new_file_path)
 
-    # Send the modified file
     await client.send_document(
         chat_id=chat_id,
         document=new_file_path,
-        caption=new_caption,
-        thumb=thumbnail_path if thumbnail_path else None
+        caption=new_caption
     )
 
     await message.reply_text("✅ File processed successfully!")
 
     # Clean up
     os.remove(new_file_path)
-    if thumbnail_path:
-        os.remove(thumbnail_path)
-
     user_requests.pop(chat_id, None)
 
 # Flask Web Server
-app = Flask(name)
+app = Flask(__name__)
 
 @app.route('/')
 def home():
