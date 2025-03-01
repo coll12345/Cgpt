@@ -1,6 +1,6 @@
-pyrogram
-tgcrypto
-Pillow
-pymongo
-imdbpy
-Flask
+pyrogram  
+tgcrypto  
+Pillow==10.0.0  
+pymongo  
+imdbpy  
+Flask  
