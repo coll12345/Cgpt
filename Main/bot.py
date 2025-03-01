@@ -1,5 +1,4 @@
 import logging
-import asyncio
 import threading
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
@@ -24,18 +23,12 @@ user_requests = {}
 # Detect forwarded files
 @bot.on_message(filters.document | filters.video | filters.audio)
 async def detect_file(client, message):
-    file_id = message.document.file_id if message.document else (
-        message.video.file_id if message.video else message.audio.file_id
-    )
-    file_name = message.document.file_name if message.document else (
-        "Video.mp4" if message.video else "Audio.mp3"
-    )
-    caption = message.caption or "No Caption"
+    file = message.document or message.video or message.audio
 
     user_requests[message.chat.id] = {
-        "file_id": file_id,
-        "file_name": file_name,
-        "caption": caption
+        "file_id": file.file_id,
+        "original_name": file.file_name,
+        "caption": message.caption or "No Caption"
     }
 
     buttons = InlineKeyboardMarkup([
@@ -44,7 +37,7 @@ async def detect_file(client, message):
     ])
 
     await message.reply_text(
-        f"📂 **File Detected:** `{file_name}`\n\nChoose an option below:",
+        f"📂 **File Detected:** `{file.file_name}`\n\nChoose an option below:",
         reply_markup=buttons
     )
 
@@ -73,22 +66,22 @@ async def handle_text_input(client, message: Message):
     if chat_id not in user_requests:
         return
 
-    user_requests[chat_id]["file_name"] = message.text
+    user_requests[chat_id]["new_name"] = message.text
     await message.reply_text(f"✅ File will be renamed to `{message.text}`.\n\nClick **Done** when ready.")
 
-# Send Renamed File Instantly (No Download/Upload)
+# Send Renamed File Properly
 async def process_final_file(client, chat_id, message):
-    if chat_id not in user_requests:
-        return await message.reply_text("⚠️ No file found!")
+    if chat_id not in user_requests or "new_name" not in user_requests[chat_id]:
+        return await message.reply_text("⚠️ No file found or filename missing!")
 
     data = user_requests.pop(chat_id)
 
-    # Send the renamed file instantly
+    # Send the renamed file
     await client.send_document(
         chat_id=chat_id,
         document=data["file_id"],
-        file_name=data["file_name"],  # New filename
-        caption=f"📂 **Renamed File:** `{data['file_name']}`"
+        file_name=data["new_name"],  # Proper renaming
+        caption=f"📂 **Renamed File:** `{data['new_name']}`"
     )
 
     await message.reply_text("✅ File renamed successfully!")
@@ -108,4 +101,3 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
-    
