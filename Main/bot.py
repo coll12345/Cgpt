@@ -1,4 +1,6 @@
+import os
 import logging
+import asyncio
 import pymongo
 import threading
 from pyrogram import Client, filters
@@ -21,6 +23,10 @@ bot = Client(
 # Connect to MongoDB
 mongo_client = pymongo.MongoClient(MONGO_URI)
 db = mongo_client["AutoFilterBot"]
+
+# Ensure a download directory exists
+DOWNLOAD_DIR = "./downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 # Dictionary to store user modifications
 user_requests = {}
@@ -65,7 +71,7 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
         await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
 
     elif action == "done":
-        await send_renamed_file(client, chat_id, callback_query.message)
+        asyncio.create_task(send_renamed_file(client, chat_id, callback_query.message))  # Run in background for speed
 
     await callback_query.answer()
 
@@ -89,21 +95,31 @@ async def handle_text_input(client, message: Message):
 
     user_requests[chat_id]["action"] = None  # Reset action
 
-# Send Renamed File (Without Downloading)
+# Send Renamed File (Fastest Possible Method)
 async def send_renamed_file(client, chat_id, message):
     if chat_id not in user_requests:
         return await message.reply_text("⚠️ No file found!")
 
     data = user_requests[chat_id]
 
-    # Send the file with the new name instantly
+    # Download the file (fastest method)
+    temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/temp")
+
+    # Get new filename and rename it
+    new_file_path = f"{DOWNLOAD_DIR}/{data['file_name']}"
+    os.rename(temp_file_path, new_file_path)
+
+    # Send the renamed file instantly
     await client.send_document(
         chat_id=chat_id,
-        document=data["file_id"],
+        document=new_file_path,
         file_name=data["file_name"]
     )
 
     await message.reply_text("✅ File renamed and sent successfully!")
+
+    # Delete file after sending
+    os.remove(new_file_path)
 
     user_requests.pop(chat_id, None)
 
@@ -114,7 +130,6 @@ app = Flask(__name__)
 def home():
     return "Bot is running!"
 
-
 def run():
     app.run(host="0.0.0.0", port=8080)
 
@@ -123,4 +138,3 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
-    
