@@ -1,10 +1,9 @@
 import logging
 import asyncio
-import pymongo
 import threading
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
-from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
+from config import API_ID, API_HASH, BOT_TOKEN
 from flask import Flask
 
 # Logging setup
@@ -13,17 +12,13 @@ logger = logging.getLogger(__name__)
 
 # Initialize bot client
 bot = Client(
-    "AutoFilterBot",
+    "AutoRenameBot",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
 
-# Connect to MongoDB
-mongo_client = pymongo.MongoClient(MONGO_URI)
-db = mongo_client["AutoFilterBot"]
-
-# Store user modifications
+# Store user rename requests
 user_requests = {}
 
 # Detect forwarded files
@@ -53,7 +48,7 @@ async def detect_file(client, message):
         reply_markup=buttons
     )
 
-# Handle Callbacks
+# Handle Callback Queries
 @bot.on_callback_query()
 async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
@@ -62,7 +57,6 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
         return await callback_query.answer("⚠️ No file found!", show_alert=True)
 
     action = callback_query.data
-    user_requests[chat_id]["action"] = action
 
     if action == "rename_file":
         await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
@@ -71,41 +65,33 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
 
     await callback_query.answer()
 
-# Handle Text Input for Filename
+# Handle Filename Input
 @bot.on_message(filters.text)
 async def handle_text_input(client, message: Message):
     chat_id = message.chat.id
 
-    if chat_id not in user_requests or "action" not in user_requests[chat_id]:
+    if chat_id not in user_requests:
         return
 
-    action = user_requests[chat_id]["action"]
+    user_requests[chat_id]["file_name"] = message.text
+    await message.reply_text(f"✅ File will be renamed to `{message.text}`.\n\nClick **Done** when ready.")
 
-    if action == "rename_file":
-        new_filename = message.text
-        user_requests[chat_id]["file_name"] = new_filename
-        await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
-
-    user_requests[chat_id]["action"] = None  # Reset action
-
-# Process and Send Renamed File FAST
+# Send Renamed File Instantly (No Download/Upload)
 async def process_final_file(client, chat_id, message):
     if chat_id not in user_requests:
         return await message.reply_text("⚠️ No file found!")
 
-    data = user_requests[chat_id]
-    
-    # Copy the file instantly with a new name
-    await client.copy_message(
-        chat_id,
-        from_chat_id=chat_id,
-        message_id=message.message_id,
+    data = user_requests.pop(chat_id)
+
+    # Send the renamed file instantly
+    await client.send_document(
+        chat_id=chat_id,
+        document=data["file_id"],
+        file_name=data["file_name"],  # New filename
         caption=f"📂 **Renamed File:** `{data['file_name']}`"
     )
 
-    await message.reply_text("✅ File renamed instantly!")
-
-    user_requests.pop(chat_id, None)
+    await message.reply_text("✅ File renamed successfully!")
 
 # Flask Web Server
 app = Flask(__name__)
@@ -117,7 +103,7 @@ def home():
 def run():
     app.run(host="0.0.0.0", port=8080)
 
-# Start web server in a separate thread
+# Start the web server in a separate thread
 threading.Thread(target=run).start()
 
 # Run the bot
