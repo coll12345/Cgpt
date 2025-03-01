@@ -1,25 +1,16 @@
 import os
 import logging
-import threading
+import asyncio
 import pymongo
-import random
-from PIL import Image
-from flask import Flask
+import threading
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
-from hachoir.metadata import extractMetadata
-from hachoir.parser import createParser
-from database.users_chats_db import db
-from database.lazy_ffmpeg import take_screen_shot
-from database.add import add_user_to_database
-from plugins.settings.settings import *
-from lazybot.forcesub import handle_force_subscribe
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URI
-from info import DOWNLOAD_LOCATION, AUTH_CHANNEL
+from flask import Flask
 
 # Logging setup
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(name)
 
 # Initialize bot client
 bot = Client(
@@ -33,156 +24,131 @@ bot = Client(
 mongo_client = pymongo.MongoClient(MONGO_URI)
 db = mongo_client["AutoFilterBot"]
 
-# Dictionary to store user rename requests
-rename_requests = {}
+# Ensure a download directory exists
+DOWNLOAD_DIR = "./downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# Handle file upload
-@bot.on_message(filters.private & (filters.document | filters.audio | filters.video))
-async def rename_start(client, message):
-    file = getattr(message, message.media.value)
-    
-    rename_requests[message.chat.id] = {
-        "file_id": file.file_id,
-        "file_type": message.media.value
+# Dictionary to store user modifications
+user_requests = {}
+
+# Detect forwarded files
+@bot.on_message(filters.document | filters.video | filters.audio)
+async def detect_file(client, message):
+    file_id = message.document.file_id if message.document else (
+        message.video.file_id if message.video else message.audio.file_id
+    )
+    file_name = message.document.file_name if message.document else (
+        "Video.mp4" if message.video else "Audio.mp3"
+    )
+    caption = message.caption or "No Caption"
+
+    user_requests[message.chat.id] = {
+        "file_id": file_id,
+        "file_name": file_name,
+        "caption": caption,
+        "thumbnail": None
     }
 
-    text = f"**📂 File Detected!**\n\n📌 **File Name:** `{file.file_name}`\n📏 **Size:** `{file.file_size}`\n\n🔹 Choose an option below:"
-    buttons = [
+    buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Rename File", callback_data="rename_file")],
-        [InlineKeyboardButton("❌ Cancel", callback_data="cancel")]
-    ]
+        [InlineKeyboardButton("🖼 Change Thumbnail", callback_data="change_thumb")],
+        [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")],
+        [InlineKeyboardButton("✅ Done", callback_data="done")]
+    ])
 
-    await message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    await message.reply_text(
+        f"📂 File Detected: {file_name}\n\nChoose an option below:",
+        reply_markup=buttons
+    )
 
-# Handle rename request
-@bot.on_callback_query(filters.regex("rename_file"))
-async def rename_request(client, callback_query: CallbackQuery):
+# Handle Callback Queries
+@bot.on_callback_query()
+async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
-    
-    if chat_id not in rename_requests:
-        return await callback_query.answer("⚠️ No file found for renaming!", show_alert=True)
-    
-    await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
-    rename_requests[chat_id]["action"] = "rename"
 
-# Rename file instantly
-@bot.on_message(filters.private & filters.text)
-async def handle_rename(client, message):
+    if chat_id not in user_requests:
+        return await callback_query.answer("⚠️ No file found!", show_alert=True)
+
+    action = callback_query.data
+    user_requests[chat_id]["action"] = action
+
+    if action == "rename_file":
+        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., new_movie.mp4).")
+
+    elif action == "change_thumb":
+        await callback_query.message.reply_text("📌 Send a new thumbnail image.")
+
+    elif action == "edit_caption":
+        await callback_query.message.reply_text("📌 Send the new caption.")
+
+    elif action == "done":
+        await process_final_file(client, chat_id, callback_query.message)
+
+    await callback_query.answer()
+
+# Handle User Inputs (Text & Photo)
+@bot.on_message(filters.text | filters.photo)
+async def handle_text_input(client, message: Message):
     chat_id = message.chat.id
 
-    if chat_id in rename_requests and rename_requests[chat_id].get("action") == "rename":
+    if chat_id not in user_requests or "action" not in user_requests[chat_id]:
+        return
+
+    action = user_requests[chat_id]["action"]
+
+    if action == "rename_file":
         new_filename = message.text
-        file_info = rename_requests[chat_id]
+        user_requests[chat_id]["file_name"] = new_filename
+        await message.reply_text(f"✅ File will be renamed to {new_filename}.\n\nClick Done when ready.")
 
-        await message.reply_document(document=file_info["file_id"], file_name=new_filename)
-        
-        await message.reply_text(f"✅ File renamed to `{new_filename}`.")
-        del rename_requests[chat_id]
+    elif action == "edit_caption":
+        new_caption = message.text
+        user_requests[chat_id]["caption"] = new_caption
+        await message.reply_text("✅ Caption updated.\n\nClick Done when ready.")
 
-# Caption Handling
-@bot.on_message(filters.private & filters.command('set_caption'))
-async def add_caption(client, message):
-    if len(message.command) == 1:
-       return await message.reply_text("**Give a caption to set.\nExample:** `/set_caption {filename}\n\n💾 Size: {filesize}\n\n⏰ Duration: {duration}`")
-    caption = message.text.split(" ", 1)[1]
-    await db.set_caption(message.from_user.id, caption=caption)
-    await message.reply_text("✅ Caption saved successfully!")
+    elif action == "change_thumb" and message.photo:
+        photo_path = await client.download_media(message.photo.file_id, file_name=f"{chat_id}_thumb.jpg")
+        user_requests[chat_id]["thumbnail"] = photo_path
+        await message.reply_text("✅ Thumbnail updated.\n\nClick Done when ready.")
 
-@bot.on_message(filters.private & filters.command('del_caption'))
-async def delete_caption(client, message):
-    caption = await db.get_caption(message.from_user.id)  
-    if not caption:
-       return await message.reply_text("😔 No Caption found...")
-    await db.set_caption(message.from_user.id, caption=None)
-    await message.reply_text("✅ Your Caption has been deleted.")
+    user_requests[chat_id]["action"] = None  # Reset action
 
-@bot.on_message(filters.private & filters.command('see_caption'))
-async def see_caption(client, message):
-    caption = await db.get_caption(message.from_user.id)  
-    if caption:
-       await message.reply_text(f"**Your Caption:**\n\n`{caption}`")
-    else:
-       await message.reply_text("😔 No Caption found...")
+# Process and Send Final File
+async def process_final_file(client, chat_id, message):
+    if chat_id not in user_requests:
+        return await message.reply_text("⚠️ No file found!")
+data = user_requests[chat_id]
 
-# Thumbnail Handling
-@bot.on_message(filters.private & filters.command(['view_thumb', 'view_thumbnail', 'vt']))
-async def viewthumb(client, message):
-    await add_user_to_database(client, message)
-    if AUTH_CHANNEL:
-      fsub = await handle_force_subscribe(client, message)
-      if fsub == 400:
-        return
-    thumb = await db.get_thumbnail(message.from_user.id)
-    if thumb:
-       await client.send_photo(
-	   chat_id=message.chat.id, 
-	   photo=thumb,
-       caption=f"Current thumbnail for direct renaming",
-       reply_markup=InlineKeyboardMarkup([
-           [InlineKeyboardButton("🗑️ Delete Thumbnail" , callback_data="deleteThumbnail")]
-       ]))
-    else:
-        await message.reply_text("😔 No thumbnail found.")
+    # Download the original file
+    temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
+    new_filename = data["file_name"]
+    new_caption = data["caption"]
+    thumbnail_path = data["thumbnail"]
 
-@bot.on_message(filters.private & filters.command(['del_thumb', 'delete_thumb', 'dt']))
-async def removethumb(client, message):
-    await add_user_to_database(client, message)
-    if AUTH_CHANNEL:
-      fsub = await handle_force_subscribe(client, message)
-      if fsub == 400:
-        return
-    await db.set_thumbnail(message.from_user.id, file_id=None)
-    await message.reply_text("✅ Thumbnail deleted successfully.")
+    # Ensure a valid new file path
+    new_file_path = f"{DOWNLOAD_DIR}/{new_filename}"
+    if temp_file_path != new_file_path:
+        os.rename(temp_file_path, new_file_path)
 
-@bot.on_message(filters.private & filters.command(['set_thumbnail', 'set_thumb', 'st']))
-async def addthumbs(client, message):
-    replied = message.reply_to_message
-    if not replied or not replied.photo:
-        return await message.reply_text("❌ Reply to a photo to set it as a thumbnail.")
-    await db.set_thumbnail(message.from_user.id, file_id=replied.photo.file_id)
-    await message.reply_text("✅ Custom thumbnail set successfully!")
+    # Send the modified file
+    await client.send_document(
+        chat_id=chat_id,
+        document=new_file_path,
+        caption=new_caption,
+        thumb=thumbnail_path if thumbnail_path else None
+    )
 
-# Utility Functions
-async def Gthumb01(bot, update):
-    thumb_image_path = os.path.join(DOWNLOAD_LOCATION, f"{update.from_user.id}.jpg")
-    db_thumbnail = await db.get_lazy_thumbnail(update.from_user.id)
-    if db_thumbnail:
-        thumbnail = await bot.download_media(message=db_thumbnail, file_name=thumb_image_path)
-        Image.open(thumbnail).convert("RGB").save(thumbnail)
-        img = Image.open(thumbnail)
-        img.resize((100, 100))
-        img.save(thumbnail, "JPEG")
-    else:
-        thumbnail = None
-    return thumbnail
+    await message.reply_text("✅ File processed successfully!")
 
-async def Mdata01(download_directory):
-    metadata = extractMetadata(createParser(download_directory))
-    if metadata:
-        return (
-            metadata.get("width") if metadata.has("width") else 0,
-            metadata.get("height") if metadata.has("height") else 0,
-            metadata.get("duration").seconds if metadata.has("duration") else 0
-        )
-    return 0, 0, 0
+    # Clean up
+    os.remove(new_file_path)
+    if thumbnail_path:
+        os.remove(thumbnail_path)
 
-async def Mdata02(download_directory):
-    metadata = extractMetadata(createParser(download_directory))
-    if metadata:
-        return (
-            metadata.get("width") if metadata.has("width") else 0,
-            metadata.get("duration").seconds if metadata.has("duration") else 0
-        )
-    return 0, 0
-
-async def Mdata03(download_directory):
-    metadata = extractMetadata(createParser(download_directory))
-    if metadata:
-        return metadata.get("duration").seconds if metadata.has("duration") else 0
-    return 0
+    user_requests.pop(chat_id, None)
 
 # Flask Web Server
-app = Flask(__name__)
+app = Flask(name)
 
 @app.route('/')
 def home():
@@ -191,7 +157,7 @@ def home():
 def run():
     app.run(host="0.0.0.0", port=8080)
 
-# Start web server in background
+# Start the web server in a separate thread
 threading.Thread(target=run).start()
 
 # Run the bot
