@@ -31,37 +31,46 @@ os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 # Dictionary to store user modifications
 user_requests = {}
 
-# Detect forwarded files
-@bot.on_message(filters.document | filters.video | filters.audio)
-async def detect_file(client, message):
-    file_id = message.document.file_id if message.document else (
-        message.video.file_id if message.video else message.audio.file_id
-    )
-    file_name = message.document.file_name if message.document else (
-        "Video.mp4" if message.video else "Audio.mp3"
-    )
-    caption = message.caption or "No Caption"
 
+# Handle file messages
+@bot.on_message(filters.document | filters.video | filters.audio)
+async def file_received(client, message):
+    file_id = None
+    file_name = None
+
+    if message.document:
+        file_id = message.document.file_id
+        file_name = message.document.file_name
+    elif message.video:
+        file_id = message.video.file_id
+        file_name = "Video.mp4"
+    elif message.audio:
+        file_id = message.audio.file_id
+        file_name = "Audio.mp3"
+
+    if not file_id:
+        return await message.reply("⚠️ Could not detect a valid file.")
+
+    # Store file details
     user_requests[message.chat.id] = {
         "file_id": file_id,
-        "file_name": file_name,
-        "caption": caption,
-        "thumbnail": None
+        "caption": message.caption or "No Caption",
+        "file_name": file_name
     }
 
     buttons = InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 Rename File", callback_data="rename_file")],
         [InlineKeyboardButton("🖼 Change Thumbnail", callback_data="change_thumb")],
-        [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")],
-        [InlineKeyboardButton("✅ Done", callback_data="done")]
+        [InlineKeyboardButton("📝 Edit Caption", callback_data="edit_caption")]
     ])
 
     await message.reply_text(
-        f"📂 **File Detected:** `{file_name}`\n\nChoose an option below:",
+        f"**Movie Detected:** `{file_name}`\n\nChoose an option below:",
         reply_markup=buttons
     )
 
-# Handle Callback Queries
+
+# Handle callback queries
 @bot.on_callback_query()
 async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
@@ -69,84 +78,46 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
     if chat_id not in user_requests:
         return await callback_query.answer("⚠️ No file found!", show_alert=True)
 
-    action = callback_query.data
-    user_requests[chat_id]["action"] = action
+    data = user_requests[chat_id]
 
-    if action == "rename_file":
-        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
+    if callback_query.data == "rename_file":
+        await callback_query.message.reply_text("📌 Send the new filename (including extension, e.g., `new_movie.mp4`)")
+        user_requests[chat_id]["action"] = "rename"
 
-    elif action == "change_thumb":
+    elif callback_query.data == "change_thumb":
         await callback_query.message.reply_text("📌 Send a new thumbnail image.")
+        user_requests[chat_id]["action"] = "thumbnail"
 
-    elif action == "edit_caption":
+    elif callback_query.data == "edit_caption":
         await callback_query.message.reply_text("📌 Send the new caption.")
-
-    elif action == "done":
-        await process_final_file(client, chat_id, callback_query.message)
+        user_requests[chat_id]["action"] = "caption"
 
     await callback_query.answer()
 
-# Handle User Inputs (Text & Photo)
-@bot.on_message(filters.text | filters.photo)
-async def handle_text_input(client, message: Message):
+
+# Handle user input for renaming, caption editing, and thumbnail changing
+@bot.on_message(filters.text)
+async def handle_text_input(client, message):
     chat_id = message.chat.id
 
     if chat_id not in user_requests or "action" not in user_requests[chat_id]:
         return
 
     action = user_requests[chat_id]["action"]
-
-    if action == "rename_file":
-        new_filename = message.text
-        user_requests[chat_id]["file_name"] = new_filename
-        await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
-
-    elif action == "edit_caption":
-        new_caption = message.text
-        user_requests[chat_id]["caption"] = new_caption
-        await message.reply_text("✅ Caption updated.\n\nClick **Done** when ready.")
-
-    elif action == "change_thumb" and message.photo:
-        photo_path = await client.download_media(message.photo.file_id, file_name=f"{chat_id}_thumb.jpg")
-        user_requests[chat_id]["thumbnail"] = photo_path
-        await message.reply_text("✅ Thumbnail updated.\n\nClick **Done** when ready.")
-
-    user_requests[chat_id]["action"] = None  # Reset action
-
-# Process and Send Final File
-async def process_final_file(client, chat_id, message):
-    if chat_id not in user_requests:
-        return await message.reply_text("⚠️ No file found!")
-
     data = user_requests[chat_id]
 
-    # Download the original file
-    temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
-    new_filename = data["file_name"]
-    new_caption = data["caption"]
-    thumbnail_path = data["thumbnail"]
+    if action == "rename":
+        new_filename = message.text
+        await message.reply_document(document=data["file_id"], file_name=new_filename, caption=data["caption"])
+        await message.reply_text(f"✅ File renamed to `{new_filename}`.")
 
-    # Ensure a valid new file path
-    new_file_path = f"{DOWNLOAD_DIR}/{new_filename}"
-    if temp_file_path != new_file_path:
-        os.rename(temp_file_path, new_file_path)
-
-    # Send the modified file
-    await client.send_document(
-        chat_id=chat_id,
-        document=new_file_path,
-        caption=new_caption,
-        thumb=thumbnail_path if thumbnail_path else None
-    )
-
-    await message.reply_text("✅ File processed successfully!")
-
-    # Clean up
-    os.remove(new_file_path)
-    if thumbnail_path:
-        os.remove(thumbnail_path)
+    elif action == "caption":
+        new_caption = message.text
+        await message.reply_document(document=data["file_id"], caption=new_caption)
+        await message.reply_text("✅ Caption updated successfully.")
 
     user_requests.pop(chat_id, None)
+
 
 # Flask Web Server
 app = Flask(__name__)
@@ -163,3 +134,4 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
+    
