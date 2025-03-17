@@ -40,6 +40,8 @@ async def detect_file(client, message):
     file_name = message.document.file_name if message.document else (
         "Video.mp4" if message.video else "Audio.mp3"
     )
+    file_name = file_name.replace('_', ' ')  # Fix underscores
+
     caption = message.caption or "No Caption"
 
     user_requests[message.chat.id] = {
@@ -73,7 +75,7 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
     user_requests[chat_id]["action"] = action
 
     if action == "rename_file":
-        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new_movie.mp4`).")
+        await callback_query.message.reply_text("📌 Send the new filename (with extension, e.g., `new movie.mp4`).")
 
     elif action == "change_thumb":
         await callback_query.message.reply_text("📌 Send a new thumbnail image.")
@@ -97,7 +99,7 @@ async def handle_text_input(client, message: Message):
     action = user_requests[chat_id]["action"]
 
     if action == "rename_file":
-        new_filename = message.text
+        new_filename = message.text.replace('_', ' ')  # Fix underscores
         user_requests[chat_id]["file_name"] = new_filename
         await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
 
@@ -111,7 +113,7 @@ async def handle_text_input(client, message: Message):
         user_requests[chat_id]["thumbnail"] = photo_path
         await message.reply_text("✅ Thumbnail updated.\n\nClick **Done** when ready.")
 
-    user_requests[chat_id]["action"] = None  # Reset action
+    user_requests[chat_id]["action"] = None
 
 # Process and Send Final File
 async def process_final_file(client, chat_id, message):
@@ -126,8 +128,8 @@ async def process_final_file(client, chat_id, message):
     new_caption = data["caption"]
     thumbnail_path = data["thumbnail"]
 
-    # Ensure a valid new file path
-    new_file_path = f"{DOWNLOAD_DIR}/{new_filename}"
+    new_file_path = os.path.join(DOWNLOAD_DIR, new_filename)
+
     if temp_file_path != new_file_path:
         os.rename(temp_file_path, new_file_path)
 
@@ -163,4 +165,3 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
-    
