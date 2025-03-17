@@ -122,33 +122,30 @@ async def process_final_file(client, chat_id, message):
 
     data = user_requests[chat_id]
 
-    # Download the original file
+    # Step 1: Download the original file
     temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
-    new_filename = data["file_name"].replace('_', ' ')  # Ensure spaces
-    new_caption = data["caption"]
-    thumbnail_path = data["thumbnail"]
-
-    # Ensure a valid new file path
+    
+    # Step 2: Fix underscores by renaming after download
+    new_filename = data["file_name"].replace('_', ' ')
     new_file_path = os.path.join(DOWNLOAD_DIR, new_filename)
 
-    # Rename the file to fix underscores back to spaces
     if temp_file_path != new_file_path:
         os.rename(temp_file_path, new_file_path)
 
-    # Send the modified file
+    # Step 3: Send the renamed file
     await client.send_document(
         chat_id=chat_id,
         document=new_file_path,
-        caption=new_caption,
-        thumb=thumbnail_path if thumbnail_path else None
+        caption=data["caption"],
+        thumb=data["thumbnail"] if data["thumbnail"] else None
     )
 
     await message.reply_text("✅ File processed successfully!")
 
-    # Clean up
+    # Step 4: Clean up
     os.remove(new_file_path)
-    if thumbnail_path:
-        os.remove(thumbnail_path)
+    if data["thumbnail"]:
+        os.remove(data["thumbnail"])
 
     user_requests.pop(chat_id, None)
 
@@ -167,3 +164,4 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
+    
