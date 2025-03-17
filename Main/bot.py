@@ -124,12 +124,14 @@ async def process_final_file(client, chat_id, message):
 
     # Download the original file
     temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
-    new_filename = data["file_name"]
+    new_filename = data["file_name"].replace('_', ' ')  # Ensure spaces
     new_caption = data["caption"]
     thumbnail_path = data["thumbnail"]
 
+    # Ensure a valid new file path
     new_file_path = os.path.join(DOWNLOAD_DIR, new_filename)
 
+    # Rename the file to fix underscores back to spaces
     if temp_file_path != new_file_path:
         os.rename(temp_file_path, new_file_path)
 
