@@ -40,7 +40,6 @@ async def detect_file(client, message):
     file_name = message.document.file_name if message.document else (
         "Video.mp4" if message.video else "Audio.mp3"
     )
-    file_name = file_name.replace('_', ' ')  # Fix underscores
 
     caption = message.caption or "No Caption"
 
@@ -99,7 +98,7 @@ async def handle_text_input(client, message: Message):
     action = user_requests[chat_id]["action"]
 
     if action == "rename_file":
-        new_filename = message.text.replace('_', ' ')  # Fix underscores
+        new_filename = message.text
         user_requests[chat_id]["file_name"] = new_filename
         await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
 
@@ -126,9 +125,10 @@ async def process_final_file(client, chat_id, message):
     temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
     
     # Step 2: Fix underscores by renaming after download
-    new_filename = data["file_name"].replace('_', ' ')
+    new_filename = data["file_name"].replace('_', ' ')  # Convert underscores to spaces
     new_file_path = os.path.join(DOWNLOAD_DIR, new_filename)
 
+    # Rename the file to replace underscores with spaces
     if temp_file_path != new_file_path:
         os.rename(temp_file_path, new_file_path)
 
