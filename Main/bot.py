@@ -41,6 +41,9 @@ async def detect_file(client, message):
         "Video.mp4" if message.video else "Audio.mp3"
     )
 
+    # Replace underscores with spaces in the detected file name
+    file_name = file_name.replace("_", " ")
+
     caption = message.caption or "No Caption"
 
     user_requests[message.chat.id] = {
@@ -98,7 +101,7 @@ async def handle_text_input(client, message: Message):
     action = user_requests[chat_id]["action"]
 
     if action == "rename_file":
-        new_filename = message.text
+        new_filename = message.text.replace("_", " ")  # Ensure no underscores in new filename
         user_requests[chat_id]["file_name"] = new_filename
         await message.reply_text(f"✅ File will be renamed to `{new_filename}`.\n\nClick **Done** when ready.")
 
@@ -121,18 +124,18 @@ async def process_final_file(client, chat_id, message):
 
     data = user_requests[chat_id]
 
-    # Step 1: Download the original file
-    temp_file_path = await client.download_media(data["file_id"], file_name=f"{DOWNLOAD_DIR}/{data['file_name']}")
-    
-    # Step 2: Fix underscores by renaming after download
-    new_filename = data["file_name"].replace('_', ' ')  # Convert underscores to spaces
+    # Step 1: Download file with clean name (manually set)
+    temp_file_path = os.path.join(DOWNLOAD_DIR, data["file_name"].replace("_", " "))
+    await client.download_media(data["file_id"], file_name=temp_file_path)
+
+    # Step 2: Ensure underscores are converted to spaces in filename
+    new_filename = data["file_name"].replace("_", " ")
     new_file_path = os.path.join(DOWNLOAD_DIR, new_filename)
 
-    # Rename the file to replace underscores with spaces
     if temp_file_path != new_file_path:
         os.rename(temp_file_path, new_file_path)
 
-    # Step 3: Send the renamed file
+    # Step 3: Send the modified file
     await client.send_document(
         chat_id=chat_id,
         document=new_file_path,
@@ -164,4 +167,3 @@ threading.Thread(target=run).start()
 
 # Run the bot
 bot.run()
-    
